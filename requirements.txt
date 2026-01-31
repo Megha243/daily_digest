@@ -1,0 +1,7 @@
+httpx
+python-dotenv
+pytest
+python-telegram-bot
+aiosmtplib
+faiss-cpu
+feedparser
