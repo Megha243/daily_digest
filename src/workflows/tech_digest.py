@@ -3,84 +3,99 @@ from src.tools.fetch_hn import fetch_hacker_news
 from src.tools.fetch_product import fetch_product_news
 from src.services.llm_client import query_llm
 from src.services.delivery import send_email, send_telegram
-import asyncio
+from src.models.item import Item
 
-def format_section_html(heading, items, summaries):
-    section = f"<h2>{heading}</h2>\n"
-    for item, summary in zip(items, summaries):
-        section += f"<h3><a href='{item['link']}'>{item['title']}</a></h3>\n"
-        section += f"<p>{summary}</p>\n"
-    return section
 
-def format_section_html_telegram(heading, items, summaries):
-    section = f"<b>{heading}</b>\n\n"
-    for item, summary in zip(items, summaries):
-        section += f"<b><a href=\"{item['link']}\">{item['title']}</a></b>\n"
-        section += f"{summary}\n\n"
-    return section
+def build_summary_prompt(category: str, title: str, content: str) -> str:
+    """
+    Build a strict prompt to enforce 150–200 word summaries.
+    """
+    return f"""
+You are an expert technical writer.
 
-def format_section_markdown(heading, items, summaries):
-    section = f"## {heading}\n\n"
-    for item, summary in zip(items, summaries):
-        section += f"### [{item['title']}]({item['link']})\n\n"
-        section += f"{summary}\n\n"
-    return section
+Summarize the following {category} article in **150 to 200 words only**.
+
+Rules:
+- Do NOT exceed 200 words
+- No bullet points
+- Clear, concise English
+- Focus on key ideas and insights
+- Do not add external information
+
+Title:
+{title}
+
+Article:
+{content}
+"""
+
 
 def main():
     # --- Database Setup ---
     init_db()
     clear_items()
 
-    # --- Fetch & Save AI & Tech News ---
+    # --- Fetch News ---
     tech_items = fetch_hacker_news()
-    save_items(tech_items)
-
-    # --- Fetch & Save Product News ---
     product_items = fetch_product_news()
+
+    save_items(tech_items)
     save_items(product_items)
 
-    # --- Get All Items from DB ---
+    # --- Load from DB ---
     db_items = get_items()
 
-    # --- Separate Items by Source for Sectioning ---
-    tech_db_items = [item for item in db_items if item['source'] == 'Hacker News']
-    product_db_items = [item for item in db_items if item['source'] == 'Product Hunt']
+    tech_db_items = [i for i in db_items if i["source"] == "Hacker News"]
+    product_db_items = [i for i in db_items if i["source"] == "Product Hunt"]
 
-    # --- Summarize AI & Tech News ---
-    tech_summaries = []
+    final_items = []
+
+    # --- Summarize Tech News ---
     for item in tech_db_items:
-        prompt = f"Summarize this tech article: {item['title']}. {item['content']}"
         print(f"Sending to Ollama (Tech): {item['title']}")
+        prompt = build_summary_prompt(
+            "tech",
+            item["title"],
+            item["content"]
+        )
         summary = query_llm(prompt)
         print(f"Received summary for (Tech): {item['title']}")
-        tech_summaries.append(summary)
+
+        final_items.append(
+            Item(
+                title=item["title"],
+                source=item["source"],
+                link=item["link"],
+                summary=summary
+            )
+        )
 
     # --- Summarize Product News ---
-    product_summaries = []
     for item in product_db_items:
-        prompt = f"Summarize this product article: {item['title']}. {item['content']}"
         print(f"Sending to Ollama (Product): {item['title']}")
+        prompt = build_summary_prompt(
+            "product",
+            item["title"],
+            item["content"]
+        )
         summary = query_llm(prompt)
         print(f"Received summary for (Product): {item['title']}")
-        product_summaries.append(summary)
 
-    # --- Format Digest ---
-    tech_section_html = format_section_html("AI & Tech News", tech_db_items, tech_summaries)
-    product_section_html = format_section_html("Product News", product_db_items, product_summaries)
-    digest_html = tech_section_html + "<br>" + product_section_html
+        final_items.append(
+            Item(
+                title=item["title"],
+                source=item["source"],
+                link=item["link"],
+                summary=summary
+            )
+        )
 
-    tech_section_tg = format_section_html_telegram("AI & Tech News", tech_db_items, tech_summaries)
-    product_section_tg = format_section_html_telegram("Product News", product_db_items, product_summaries)
-    digest_tg = tech_section_tg + "\n" + product_section_tg
+    # --- Deliver Digest ---
+    send_email(final_items)
+    send_telegram(final_items)
 
-    tech_section_md = format_section_markdown("AI & Tech News", tech_db_items, tech_summaries)
-    product_section_md = format_section_markdown("Product News", product_db_items, product_summaries)
-    digest_md = tech_section_md + "\n" + product_section_md
+    print("✅ Digest sent via Email and Telegram successfully.")
 
-    # --- Deliver ---
-    asyncio.run(send_email("Your Daily Digest", digest_html, text_body=digest_md))
-    asyncio.run(send_telegram(digest_tg))
-    print("Digest sent via email and Telegram.")
 
 if __name__ == "__main__":
     main()

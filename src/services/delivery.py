@@ -1,84 +1,69 @@
-import aiosmtplib
-import asyncio
-from .config import EMAIL_SMTP_HOST, EMAIL_FROM, EMAIL_PASSWORD, EMAIL_TO
-from telegram import Bot
-from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-import asyncio
-from telegram import Bot
-from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-from email.message import EmailMessage
-from .config import EMAIL_SMTP_HOST, EMAIL_FROM, EMAIL_PASSWORD, EMAIL_TO
+import smtplib
+import requests
+import html
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+from src.services.config import settings
 
 
+def send_email(items):
+    """
+    Send digest via Email.
+    Article titles are clickable and redirect to the original source.
+    """
 
-# async def send_email(subject, body):
-#     message = f"Subject: {subject}\n\n{body}"
-#     await aiosmtplib.send(
-#         message,
-#         hostname=EMAIL_SMTP_HOST,
-#         port=587,
-#         username=EMAIL_FROM,
-#         password=EMAIL_PASSWORD,
-#         start_tls=True,
-#         sender=EMAIL_FROM,
-#         recipients=[EMAIL_TO]
-#     )
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "📰 Daily Tech Digest"
+    msg["From"] = settings.EMAIL_FROM
+    msg["To"] = settings.EMAIL_TO
 
-# 
-async def send_email(subject, html_body, text_body=None):
-    msg = EmailMessage()
-    msg["From"] = EMAIL_FROM
-    msg["To"] = EMAIL_TO
-    msg["Subject"] = subject
-    # Fallback to plain text if not provided
-    msg.set_content(text_body or "Your email client does not support HTML.")
-    msg.add_alternative(html_body, subtype='html')
+    html_body = "<h2>Daily Tech Digest</h2>"
 
-    await aiosmtplib.send(
-        msg,
-        hostname=EMAIL_SMTP_HOST,
-        port=587,
-        username=EMAIL_FROM,
-        password=EMAIL_PASSWORD,
-        start_tls=True,
-    )
+    for item in items:
+        html_body += f"""
+        <hr>
+        <h3>
+            <a href="{item.link}" target="_blank">
+                {item.title}
+            </a>
+        </h3>
+        <p><i>Source: {item.source}</i></p>
+        <p>{item.summary}</p>
+        """
 
-# def send_telegram(message):
-#     bot = Bot(token=TELEGRAM_BOT_TOKEN)
-#     bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode='Markdown')
+    msg.attach(MIMEText(html_body, "html"))
 
-# async def send_telegram(message):
-#     bot = Bot(token=TELEGRAM_BOT_TOKEN)
-#     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode=None)
+    with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+        server.starttls()
+        server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+        server.send_message(msg)
 
-# async def send_telegram(message):
-#     from telegram import Bot
-#     from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
-#     bot = Bot(token=TELEGRAM_BOT_TOKEN)
-#     max_length = 4000  # Telegram limit is 4096, keep a little buffer
+def send_telegram(items):
+    """
+    Send digest to Telegram using HTML parse mode.
+    Titles are clickable and redirect to the original article.
+    """
 
-#     # Split the message into chunks
-#     for i in range(0, len(message), max_length):
-#         chunk = message[i:i+max_length]
-#         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=chunk, parse_mode=None)
+    for item in items:
+        title = html.escape(item.title)
+        summary = html.escape(item.summary)
+        source = html.escape(item.source)
 
-# async def send_telegram(message):
-#     from telegram import Bot
-#     from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+        message = (
+            f"<b><a href=\"{item.link}\">{title}</a></b>\n"
+            f"<i>Source: {source}</i>\n\n"
+            f"{summary}"
+        )
 
-#     bot = Bot(token=TELEGRAM_BOT_TOKEN)
-#     max_length = 4000  # Telegram limit is 4096, keep a little buffer
-#     for i in range(0, len(message), max_length):
-#         chunk = message[i:i+max_length]
-#         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=chunk, parse_mode="Markdown")
-
-async def send_telegram(message):
-    from telegram import Bot
-    from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    max_length = 4000  # Telegram limit is 4096, keep a little buffer
-    for i in range(0, len(message), max_length):
-        chunk = message[i:i+max_length]
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=chunk, parse_mode="HTML")
+        requests.post(
+            f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={
+                "chat_id": settings.TELEGRAM_CHAT_ID,
+                "text": message,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": False,
+            },
+            timeout=20,
+        )

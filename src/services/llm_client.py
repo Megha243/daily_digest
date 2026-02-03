@@ -1,11 +1,26 @@
-import httpx
-from .config import OLLAMA_BASE_URL, OLLAMA_MODEL
+import requests
+from src.services.config import settings
 
-def query_llm(prompt):
-    url = f"{OLLAMA_BASE_URL}/chat/completions"
+
+def query_llm(prompt: str) -> str:
+    """
+    Send a prepared prompt to Ollama and return the response.
+    """
+
+    url = f"{settings.OLLAMA_BASE_URL}/api/generate"
+
     payload = {
-        "model": OLLAMA_MODEL,
-        "messages": [{"role": "user", "content": prompt}]
+        "model": settings.OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
     }
-    response = httpx.post(url, json=payload, timeout=90)  # Add timeout here
-    return response.json()['choices'][0]['message']['content']
+
+    response = requests.post(url, json=payload, timeout=120)
+
+    # Helpful debug if Ollama is not reachable
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Ollama error {response.status_code}: {response.text}"
+        )
+
+    return response.json().get("response", "").strip()
